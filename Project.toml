@@ -3,6 +3,14 @@ uuid = "1c79c530-3a9d-43cd-822f-bba4c4e182d2"
 authors = ["James Gardner <james.gardner1421@gmail.com> and contributors"]
 version = "0.1.0"
 
+[deps]
+FiniteDiff = "6a86dc24-6348-571c-b903-95158fe2bd41"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NQCModels = "c814dc9f-a51f-4eaf-877f-82eda4edad48"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+UnitfulAtomic = "a7773ee8-282e-5fa2-be4e-bd808c38a91a"
+
 [compat]
 julia = "1"
 
