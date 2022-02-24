@@ -12,6 +12,6 @@ To initialise the model:
 ```julia
 FortranNOAu111Model("path/to/library", initial_geometry; Ms=number_of_bath_states)
 ```
-* `"path/to/library/"` must point to the Fortran shared library containing the relevant functions.
+* `"path/to/library/"` must point to the Fortran shared library that can be compiled in the `lib` directory.
 * `initial_geometry` is used to initialise the neighbours of the metal atoms.
 * `Ms` determines how many bath states are added.
