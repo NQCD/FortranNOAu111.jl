@@ -1,5 +1,10 @@
 # FortranNOAu111
 
+[![][ci-img]][ci-url]
+
+[ci-img]: https://github.com/nqcd/NQCDynamics.jl/actions/workflows/CI.yml/badge.svg
+[ci-url]: https://github.com/nqcd/NQCDynamics.jl/actions/workflows/CI.yml
+
 This interfaces the Fortran version of the NO on Au(111) model from Roy, Shenvi and Tully in J. Chem. Phys. 130, 174716 (2009)
 with NQCModels.jl.
 
