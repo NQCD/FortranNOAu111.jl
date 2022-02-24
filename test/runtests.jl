@@ -28,7 +28,7 @@ no = [
 ]
 r = austrip.(hcat(no, r) .* u"Å")
 
-model = FortranNOAu111Model("$(@__DIR__)/tullynoau111", r; Ms=6)
+model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=6)
 
 @time @testset "Finite difference gradient for individual elements" begin
     function V_neutral(x)
