@@ -24,9 +24,10 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     vA::Matrix{Float64}
     DeltaE::Float64
     nelectrons::Int
+    freeze::Vector{Int}
 end
 
-function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1)
+function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
 
     lib = Libdl.dlopen(library_path)
     energy_force_func = Libdl.dlsym(lib, :get_energies_and_forces)
@@ -57,8 +58,12 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1)
     dA = eigs.values
     vA = eigs.vectors
 
+    if freeze_layers != 0
+        freeze = find_layer_indices(r, freeze_layers)
+    end
+
     FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
-        dA, vA, DeltaE, nelectrons
+        dA, vA, DeltaE, nelectrons, freeze
     )
 end
 
@@ -71,6 +76,28 @@ function get_nearest_neighbours(lib, N, r, dnn, aPBC)
         N, r, dnn * 1.01, aPBC, nn
     )
     return nn
+end
+
+function find_layer_indices(r, layers)
+    freeze = Int[]
+    layers == 0 && return freeze
+
+    z_coordinates = @view r[3,:]
+    permutation = sortperm(z_coordinates)
+    ordered_z = z_coordinates[permutation]
+    current_z = ordered_z[begin]
+    current_layer = 1
+
+    for (i, z) in enumerate(ordered_z)
+        if !isapprox(z, current_z)
+            current_layer += 1
+            current_layer > layers && break
+            current_z = z
+        end
+        push!(freeze, permutation[i])
+    end
+    
+    return freeze
 end
 
 NQCModels.ndofs(::FortranNOAu111Model) = 3
@@ -99,6 +126,7 @@ end
 function NQCModels.state_independent_derivative!(model::FortranNOAu111Model, D::AbstractMatrix, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
     D .= get_neutral_force(model)
+    D[:,model.freeze] .= zero(eltype(r))
     return D
 end
 
@@ -117,6 +145,11 @@ function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:H
     for I in eachindex(D)
         burkey_cantrell_continuum_derivative!(model, D, I)
         D[I][1,1] = get_ion_force(model)[I] - get_neutral_force(model)[I]
+    end
+    for i in model.freeze
+        for j in axes(D, 1)
+            fill!(D[j,i], zero(eltype(r)))
+        end
     end
 
     return D
