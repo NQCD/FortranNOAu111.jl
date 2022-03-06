@@ -30,6 +30,12 @@ r = austrip.(hcat(no, r) .* u"Å")
 
 model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=6)
 
+@test length(FortranNOAu111.find_layer_indices(r, 5)) == 530
+@test length(FortranNOAu111.find_layer_indices(r, 4)) == 528
+@test length(FortranNOAu111.find_layer_indices(r, 3)) == div(528, 4) * 3
+@test length(FortranNOAu111.find_layer_indices(r, 2)) == div(528, 2)
+@test length(FortranNOAu111.find_layer_indices(r, 1)) == div(528, 4)
+
 @time @testset "Finite difference gradient for individual elements" begin
     function V_neutral(x)
         FortranNOAu111.evaluate_energy_force_func!(model, x)
