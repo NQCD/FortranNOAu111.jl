@@ -5,7 +5,8 @@ export FortranNOAu111Model
 using NQCModels: NQCModels
 using Unitful, UnitfulAtomic
 using Libdl: Libdl
-using LinearAlgebra: Hermitian, eigen
+using LinearAlgebra: Hermitian, eigen, diagind
+using FastGaussQuadrature: gausslegendre
 
 struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     energy_force_func::Ptr{Nothing}
@@ -20,11 +21,12 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     r0::Matrix{Cdouble}
     mass::Vector{Cdouble}
     Ms::Cint
-    dA::Vector{Float64}
-    vA::Matrix{Float64}
     DeltaE::Float64
     nelectrons::Int
     freeze::Vector{Int}
+
+    x_gauss::Vector{Float64}
+    w_gauss::Vector{Float64}
 end
 
 function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
@@ -43,8 +45,12 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
     Hp = zeros(3)
     dHp = zeros(3,3*(N+2))
 
+    U = [
+       -1/sqrt(2) 1/sqrt(6) -1/sqrt(3)
+        0.0      -2/sqrt(6) -1/sqrt(3)
+        1/sqrt(2) 1/sqrt(6) -1/sqrt(3)
+    ]
     a = sqrt(2) * dnn
-    U = reshape([-1/sqrt(2),0,1/sqrt(2), 1/sqrt(2),-2/sqrt(6),1/sqrt(6), -1/sqrt(3),-1/sqrt(3),-1/sqrt(3) ], (3,3))
     r0 = transpose(U) * reshape([0,1,1,0,1,-1,1,0,1,-1,0,1,1,1,0,1,-1,0,0,-1,-1,0,-1,1,-1,0,-1,1,0,-1,-1,-1,0,-1,1,0], (3,12)) ./ 2 .* a
 
     mass = zeros(N+2)
@@ -54,16 +60,15 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
 
     DeltaE = austrip(7u"eV")
     nelectrons = fld(Ms, 2)
-    eigs = eigen(get_Agauss(nelectrons))
-    dA = eigs.values
-    vA = eigs.vectors
+
+    x_gauss, w_gauss = gausslegendre(nelectrons)
 
     if freeze_layers != 0
         freeze = find_layer_indices(r, freeze_layers)
     end
 
     FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
-        dA, vA, DeltaE, nelectrons, freeze
+        DeltaE, nelectrons, freeze, x_gauss, w_gauss
     )
 end
 
@@ -125,15 +130,26 @@ end
 
 function NQCModels.state_independent_derivative!(model::FortranNOAu111Model, D::AbstractMatrix, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
-    D .= get_neutral_force(model)
-    D[:,model.freeze] .= zero(eltype(r))
+
+    copyto!(D, get_neutral_force(model))
+    freeze_atoms!(D, model.freeze)
     return D
 end
 
 function NQCModels.potential!(model::FortranNOAu111Model, V::Hermitian, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
 
-    burkey_cantrell_continuum!(model, V)
+    (;DeltaE, x_gauss, w_gauss) = model
+
+    bath = @view V[diagind(V)[2:end]]
+    set_bath_energies!(bath, x_gauss, DeltaE)
+
+    E_coup = get_coupling_element(model)
+    couplings = @view V.data[2:end,1]
+    set_coupling_elements!(couplings, w_gauss, DeltaE, E_coup)
+    couplings = @view V.data[1,2:end]
+    set_coupling_elements!(couplings, w_gauss, DeltaE, E_coup)
+
     V[1,1] = get_ion_element(model) - get_neutral_element(model)
 
     return V
@@ -142,60 +158,53 @@ end
 function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:Hermitian}, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
 
+    (;w_gauss, DeltaE) = model
+
+    F_coup = get_coupling_force(model)
     for I in eachindex(D)
-        burkey_cantrell_continuum_derivative!(model, D, I)
+        coupling = @view D[I].data[2:end,1]
+        set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
+        coupling = @view D[I].data[1,2:end]
+        set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
         D[I][1,1] = get_ion_force(model)[I] - get_neutral_force(model)[I]
     end
-    for i in model.freeze
-        for j in axes(D, 1)
-            fill!(D[j,i], zero(eltype(r)))
-        end
-    end
+    freeze_atoms!(D, model.freeze)
 
     return D
 end
 
-function get_Agauss(nelectrons)
-    mtemp = zeros(nelectrons,nelectrons)
-    for i in range(1,nelectrons-1)
-        mtemp[i,i+1] = i/sqrt((2i+1) * (2i-1))
+function freeze_atoms!(D::AbstractMatrix, freeze_indices)
+    @views for i in freeze_indices
+        fill!(D[:,i], zero(eltype(D)))
     end
-    mtemp = Hermitian(mtemp)
-    return mtemp
 end
 
-function burkey_cantrell_continuum!(model::FortranNOAu111Model, V::Hermitian)
-
-    (;nelectrons, dA, vA, DeltaE) = model
-    for i in range(2, nelectrons+1) # Set diagonal entries
-        V.data[i,i] =  (DeltaE/4.0)*dA[i-1] - DeltaE/4.0
-        V.data[i+nelectrons,i+nelectrons] =  (DeltaE/4.0)*dA[i-1] + DeltaE/4.0
+function freeze_atoms!(D::AbstractMatrix{<:Hermitian}, freeze_indices)
+    for i in freeze_indices
+        for j in axes(D, 1)
+            fill!(D[j,i], zero(eltype(D[j,i])))
+        end
     end
-
-    E_coup = get_coupling_element(model)
-    vtemp = E_coup*sqrt.((DeltaE*2*vA[1,:].*vA[1,:])/4)./sqrt(DeltaE)
-
-    V.data[1,2:nelectrons+1] .= vtemp
-    V.data[2:nelectrons+1,1] .= vtemp
-    V.data[1,2+nelectrons:end] .= vtemp
-    V.data[2+nelectrons:end,1] .= vtemp
 end
 
-function burkey_cantrell_continuum_derivative!(model::FortranNOAu111Model, derivative::AbstractMatrix, I)
+function set_bath_energies!(bath, x_gauss, DeltaE)
+    for i in eachindex(x_gauss)
+        bath[i] = DeltaE * (-1 + x_gauss[i]) / 4
+    end
+    n = length(x_gauss)
+    for i in eachindex(x_gauss)
+        bath[i+n] = DeltaE * (1 + x_gauss[i]) / 4
+    end
+end
 
-    (;nelectrons, vA, DeltaE) = model
-    FF = get_coupling_force(model)[I]
-    # The expression here is without the division by the square root,
-    # bcs the square-root comes into the energy expression from the integration
-    # of the Schroedinger equation. The forces are not subject to Schroedinger.
-    # James: I'm using the sqrt to be consistent with the energy. Maybe we don't need is here or in the energy?
-    dvtemp =FF*sqrt.((DeltaE*2*vA[1,:].*vA[1,:])/4.0)./sqrt(DeltaE)
-    # dvtemp = FF*sqrt.((DeltaE*2*vA[1,:].*vA[1,:])/4.0)
-
-    derivative[I].data[1,2:nelectrons+1] .= dvtemp
-    derivative[I].data[2:nelectrons+1,1] .= dvtemp
-    derivative[I].data[1,2+nelectrons:end] .= dvtemp
-    derivative[I].data[2+nelectrons:end,1] .= dvtemp
+function set_coupling_elements!(coupling, w_gauss, DeltaE, E_coup)
+    nelectrons = length(w_gauss)
+    for i in eachindex(w_gauss)
+        coupling[i] = sqrt(DeltaE * w_gauss[i]) / 2 * E_coup / sqrt(DeltaE)
+    end
+    for i in eachindex(w_gauss)
+        coupling[i+nelectrons] = coupling[i]
+    end
 end
 
 function evaluate_energy_force_func!(model::FortranNOAu111Model, r::AbstractMatrix)
@@ -203,12 +212,8 @@ function evaluate_energy_force_func!(model::FortranNOAu111Model, r::AbstractMatr
     (;N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp) = model
     ccall(
         model.energy_force_func, Cvoid,
-        (Ref{Cint},
-        Ptr{Cdouble},
-        Ptr{Cint},
-        Ptr{Cdouble}, Ptr{Cdouble}, Ptr{Cdouble},
-        Ref{Cint},
-        Ptr{Cdouble}, Ptr{Cdouble}),
+        (Ref{Cint}, Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble},
+        Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble}),
         N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp
     )
 end
