@@ -27,6 +27,10 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
 
     x_gauss::Vector{Float64}
     w_gauss::Vector{Float64}
+
+    tmp_neutral_force::Matrix{Float64}
+    tmp_ion_force::Matrix{Float64}
+    tmp_coupling_force::Matrix{Float64}
 end
 
 function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
@@ -67,8 +71,13 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
         freeze = find_layer_indices(r, freeze_layers)
     end
 
+    tmp_neutral_force = zero(r)
+    tmp_ion_force = zero(r)
+    tmp_coupling_force = zero(r)
+
     FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
-        DeltaE, nelectrons, freeze, x_gauss, w_gauss
+        DeltaE, nelectrons, freeze, x_gauss, w_gauss,
+        tmp_neutral_force, tmp_ion_force, tmp_coupling_force
     )
 end
 
@@ -115,9 +124,32 @@ get_neutral_element(model::FortranNOAu111Model) = convert_energy(model.Hp[1])
 get_ion_element(model::FortranNOAu111Model) = convert_energy(model.Hp[2])
 get_coupling_element(model::FortranNOAu111Model) = convert_energy(model.Hp[3])
 
-get_neutral_force(model::FortranNOAu111Model) = @views convert_force.(reshape(model.dHp[1,:], 3, :))
-get_ion_force(model::FortranNOAu111Model) = @views convert_force.(reshape(model.dHp[2,:], 3, :))
-get_coupling_force(model::FortranNOAu111Model) = @views convert_force.(reshape(model.dHp[3,:], 3, :))
+function get_neutral_force!(model::FortranNOAu111Model)
+    source = @view model.dHp[1,:]
+    output = model.tmp_neutral_force
+    convert_force_in_buffer!(source, output)
+    return output
+end
+
+function get_ion_force!(model::FortranNOAu111Model)
+    source = @view model.dHp[2,:]
+    output = model.tmp_ion_force
+    convert_force_in_buffer!(source, output)
+    return output
+end
+
+function get_coupling_force!(model::FortranNOAu111Model)
+    source = @view model.dHp[3,:]
+    output = model.tmp_coupling_force
+    convert_force_in_buffer!(source, output)
+    return output
+end
+
+function convert_force_in_buffer!(source, output)
+    for I in eachindex(output, source)
+        output[I] = convert_force(source[I])
+    end
+end
 
 function set_coordinates!(model::FortranNOAu111Model, r)
     model.x .= ustrip.(auconvert.(u"m", r))
@@ -131,7 +163,7 @@ end
 function NQCModels.state_independent_derivative!(model::FortranNOAu111Model, D::AbstractMatrix, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
 
-    copyto!(D, get_neutral_force(model))
+    copyto!(D, get_neutral_force!(model))
     freeze_atoms!(D, model.freeze)
     return D
 end
@@ -160,13 +192,16 @@ function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:H
 
     (;w_gauss, DeltaE) = model
 
-    F_coup = get_coupling_force(model)
-    for I in eachindex(D)
-        coupling = @view D[I].data[2:end,1]
+    F_neutral = get_neutral_force!(model)
+    F_ion = get_ion_force!(model)
+    F_coup = get_coupling_force!(model)
+
+    for I in eachindex(D, F_neutral, F_ion, F_coup)
+        coupling = @view D[I].data[begin+1:end,begin]
         set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
-        coupling = @view D[I].data[1,2:end]
+        coupling = @view D[I].data[begin,begin+1:end]
         set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
-        D[I][1,1] = get_ion_force(model)[I] - get_neutral_force(model)[I]
+        D[I][1,1] = F_ion[I] - F_neutral[I]
     end
     freeze_atoms!(D, model.freeze)
 
