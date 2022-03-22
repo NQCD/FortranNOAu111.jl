@@ -52,7 +52,7 @@ end
     @testset "dHp1" begin
 
         reference = permutedims(readdlm(joinpath(@__DIR__, "reference_data", "dHp1.txt"); skipstart=0))
-        F = FortranNOAu111.get_neutral_force(model)
+        F = FortranNOAu111.get_neutral_force!(model)
         @test reference ≈ F rtol=1e-6
     end
 
@@ -136,9 +136,9 @@ end
         F3 = FiniteDiff.finite_difference_gradient(V_coupling, r)
 
         FortranNOAu111.evaluate_energy_force_func!(model, r)
-        analytic_neutral = FortranNOAu111.get_neutral_force(model)
-        analytic_ion = FortranNOAu111.get_ion_force(model)
-        analytic_coupling = FortranNOAu111.get_coupling_force(model)
+        analytic_neutral = FortranNOAu111.get_neutral_force!(model)
+        analytic_ion = FortranNOAu111.get_ion_force!(model)
+        analytic_coupling = FortranNOAu111.get_coupling_force!(model)
         @test F1 ≈ analytic_neutral 
         @test F2 ≈ analytic_ion
         @test F3 ≈ analytic_coupling
