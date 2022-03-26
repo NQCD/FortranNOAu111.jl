@@ -31,6 +31,8 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     tmp_neutral_force::Matrix{Float64}
     tmp_ion_force::Matrix{Float64}
     tmp_coupling_force::Matrix{Float64}
+
+    cache_positions::Matrix{Float64}
 end
 
 function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
@@ -75,9 +77,12 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
     tmp_ion_force = zero(r)
     tmp_coupling_force = zero(r)
 
+    cache_positions = zero(r)
+
     FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
         DeltaE, nelectrons, freeze, x_gauss, w_gauss,
-        tmp_neutral_force, tmp_ion_force, tmp_coupling_force
+        tmp_neutral_force, tmp_ion_force, tmp_coupling_force,
+        cache_positions
     )
 end
 
@@ -152,7 +157,9 @@ function convert_force_in_buffer!(source, output)
 end
 
 function set_coordinates!(model::FortranNOAu111Model, r)
-    model.x .= ustrip.(auconvert.(u"m", r))
+    for I in eachindex(model.x, r)
+        model.x[I] = ustrip(auconvert(u"m", r[I]))
+    end
 end
 
 function NQCModels.state_independent_potential(model::FortranNOAu111Model, r::AbstractMatrix)
@@ -223,34 +230,37 @@ function freeze_atoms!(D::AbstractMatrix{<:Hermitian}, freeze_indices)
 end
 
 function set_bath_energies!(bath, x_gauss, DeltaE)
-    for i in eachindex(x_gauss)
+    @inbounds for i in eachindex(x_gauss)
         bath[i] = DeltaE * (-1 + x_gauss[i]) / 4
     end
     n = length(x_gauss)
-    for i in eachindex(x_gauss)
+    @inbounds for i in eachindex(x_gauss)
         bath[i+n] = DeltaE * (1 + x_gauss[i]) / 4
     end
 end
 
 function set_coupling_elements!(coupling, w_gauss, DeltaE, E_coup)
     nelectrons = length(w_gauss)
-    for i in eachindex(w_gauss)
+    @inbounds for i in eachindex(w_gauss)
         coupling[i] = sqrt(DeltaE * w_gauss[i]) / 2 * E_coup / sqrt(DeltaE)
     end
-    for i in eachindex(w_gauss)
+    @inbounds for i in eachindex(w_gauss)
         coupling[i+nelectrons] = coupling[i]
     end
 end
 
 function evaluate_energy_force_func!(model::FortranNOAu111Model, r::AbstractMatrix)
-    set_coordinates!(model, r)
-    (;N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp) = model
-    ccall(
-        model.energy_force_func, Cvoid,
-        (Ref{Cint}, Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble},
-        Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble}),
-        N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp
-    )
+    if r != model.cache_positions
+        set_coordinates!(model, r)
+        (;N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp) = model
+        ccall(
+            model.energy_force_func, Cvoid,
+            (Ref{Cint}, Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble},
+            Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble}),
+            N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp
+        )
+        copy!(model.cache_positions, r)
+    end
 end
 
 end
