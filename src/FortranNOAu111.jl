@@ -24,6 +24,7 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     DeltaE::Float64
     nelectrons::Int
     freeze::Vector{Int}
+    mobile_atoms::Vector{Int}
 
     x_gauss::Vector{Float64}
     w_gauss::Vector{Float64}
@@ -72,6 +73,7 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
     if freeze_layers != 0
         freeze = find_layer_indices(r, freeze_layers)
     end
+    mobile_atoms = setdiff(axes(r, 2), freeze)
 
     tmp_neutral_force = zero(r)
     tmp_ion_force = zero(r)
@@ -80,11 +82,13 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
     cache_positions = zero(r)
 
     FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
-        DeltaE, nelectrons, freeze, x_gauss, w_gauss,
+        DeltaE, nelectrons, freeze, mobile_atoms, x_gauss, w_gauss,
         tmp_neutral_force, tmp_ion_force, tmp_coupling_force,
         cache_positions
     )
 end
+
+NQCModels.mobileatoms(model::FortranNOAu111Model, r) = model.mobile_atoms
 
 function get_nearest_neighbours(lib, N, r, dnn, aPBC)
     nn_func = Libdl.dlsym(lib, :get_nn)
@@ -203,14 +207,15 @@ function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:H
     F_ion = get_ion_force!(model)
     F_coup = get_coupling_force!(model)
 
-    for I in eachindex(D, F_neutral, F_ion, F_coup)
-        coupling = @view D[I].data[begin+1:end,begin]
-        set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
-        coupling = @view D[I].data[begin,begin+1:end]
-        set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[I])
-        D[I][1,1] = F_ion[I] - F_neutral[I]
+    @inbounds for i in NQCModels.mobileatoms(model, r)
+        for j in axes(r, 1)
+            coupling = @view D[j,i].data[begin+1:end,begin]
+            set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[j,i])
+            coupling = @view D[j,i].data[begin,begin+1:end]
+            set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[j,i])
+            D[j,i][1,1] = F_ion[j,i] - F_neutral[j,i]
+        end
     end
-    freeze_atoms!(D, model.freeze)
 
     return D
 end
@@ -218,14 +223,6 @@ end
 function freeze_atoms!(D::AbstractMatrix, freeze_indices)
     @views for i in freeze_indices
         fill!(D[:,i], zero(eltype(D)))
-    end
-end
-
-function freeze_atoms!(D::AbstractMatrix{<:Hermitian}, freeze_indices)
-    for i in freeze_indices
-        for j in axes(D, 1)
-            fill!(D[j,i], zero(eltype(D[j,i])))
-        end
     end
 end
 
