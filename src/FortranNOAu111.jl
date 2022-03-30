@@ -4,12 +4,12 @@ export FortranNOAu111Model
 
 using NQCModels: NQCModels
 using Unitful, UnitfulAtomic
-using Libdl: Libdl
 using LinearAlgebra: Hermitian, eigen, diagind
 using FastGaussQuadrature: gausslegendre
 
+const libtullynoau111 = "tullynoau111"
+
 struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
-    energy_force_func::Ptr{Nothing}
     x::Matrix{Cdouble}
     nn::Matrix{Cint}
     N::Cint
@@ -36,10 +36,7 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     cache_positions::Matrix{Float64}
 end
 
-function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
-
-    lib = Libdl.dlopen(library_path)
-    energy_force_func = Libdl.dlsym(lib, :get_energies_and_forces)
+function FortranNOAu111Model(r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
 
     x = copy(r)
     x = ustrip.(auconvert.(u"m", x))
@@ -48,7 +45,7 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
     aPBC = [32.47387893u"Å", 30.67985848u"Å", sqrt(6) * dnn * 100]
     dnn = ustrip(uconvert(u"m", dnn))
     aPBC = ustrip.(uconvert.(u"m", aPBC))
-    nn = get_nearest_neighbours(lib, N, x, dnn * 1.01, aPBC)
+    nn = get_nearest_neighbours(N, x, dnn * 1.01, aPBC)
     Hp = zeros(3)
     dHp = zeros(3,3*(N+2))
 
@@ -81,7 +78,7 @@ function FortranNOAu111Model(library_path, r; Ms, VAuFlag=1, freeze=Int[], freez
 
     cache_positions = zero(r)
 
-    FortranNOAu111Model(energy_force_func, x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
+    FortranNOAu111Model(x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
         DeltaE, nelectrons, freeze, mobile_atoms, x_gauss, w_gauss,
         tmp_neutral_force, tmp_ion_force, tmp_coupling_force,
         cache_positions
@@ -90,11 +87,10 @@ end
 
 NQCModels.mobileatoms(model::FortranNOAu111Model, r) = model.mobile_atoms
 
-function get_nearest_neighbours(lib, N, r, dnn, aPBC)
-    nn_func = Libdl.dlsym(lib, :get_nn)
+function get_nearest_neighbours(N, r, dnn, aPBC)
     nn = zeros(Cint, N, 12)
     ccall(
-        nn_func, Cvoid,
+        (:get_nn, libtullynoau111), Cvoid,
         (Ref{Cint}, Ptr{Cdouble}, Ref{Cdouble}, Ptr{Cdouble}, Ptr{Cint}),
         N, r, dnn * 1.01, aPBC, nn
     )
@@ -251,7 +247,7 @@ function evaluate_energy_force_func!(model::FortranNOAu111Model, r::AbstractMatr
         set_coordinates!(model, r)
         (;N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp) = model
         ccall(
-            model.energy_force_func, Cvoid,
+            (:get_energies_and_forces, libtullynoau111), Cvoid,
             (Ref{Cint}, Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble},
             Ref{Cdouble}, Ref{Cint}, Ref{Cdouble}, Ref{Cdouble}),
             N, x, nn, r0, aPBC, mass, VAuFlag, Hp, dHp

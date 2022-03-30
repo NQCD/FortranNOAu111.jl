@@ -5,7 +5,6 @@ version = "0.1.0"
 
 [deps]
 FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
-Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NQCModels = "c814dc9f-a51f-4eaf-877f-82eda4edad48"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
@@ -21,7 +20,8 @@ julia = "1"
 [extras]
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 FiniteDiff = "6a86dc24-6348-571c-b903-95158fe2bd41"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["DelimitedFiles", "FiniteDiff", "Test"]
+test = ["DelimitedFiles", "FiniteDiff", "Libdl", "Test"]

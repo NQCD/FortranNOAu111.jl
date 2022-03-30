@@ -5,6 +5,9 @@ using DelimitedFiles
 using Unitful, UnitfulAtomic
 using FiniteDiff
 using LinearAlgebra
+using Libdl
+
+push!(DL_LOAD_PATH, joinpath(@__DIR__, "../lib"))
 
 @time @testset "find_layer_indices" begin
     r = permutedims(readdlm("$(@__DIR__)/surface_Au111.dat"; skipstart=4))
@@ -30,7 +33,7 @@ end
         1.5e-10 2.65e-10;
     ] .* u"m"))
     r = austrip.(hcat(no, r) .* u"Å")
-    model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=10)
+    model = FortranNOAu111Model(r; Ms=10)
     FortranNOAu111.evaluate_energy_force_func!(model, r)
 
     @testset "Hamiltonian" begin
@@ -58,7 +61,7 @@ end
 
     @time @testset "state_independent_force" begin
         F = zero(r)
-        model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=10, freeze_layers=1)
+        model = FortranNOAu111Model(r; Ms=10, freeze_layers=1)
         NQCModels.state_independent_derivative!(model, F, r)
         LinearAlgebra.lmul!(-1, F)
         reference = permutedims(readdlm(joinpath(@__DIR__, "reference_data", "state_independent_force.txt"); skipstart=0))
@@ -67,7 +70,7 @@ end
 
     @time @testset "complete_force" begin
         F = zero(r)
-        model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=10, freeze_layers=1)
+        model = FortranNOAu111Model(r; Ms=10, freeze_layers=1)
         NQCModels.state_independent_derivative!(model, F, r)
         LinearAlgebra.lmul!(-1, F)
 
@@ -113,7 +116,7 @@ end
         2.0 2.0;
     ]
     r = austrip.(hcat(no, r) .* u"Å")
-    model = FortranNOAu111Model("$(@__DIR__)/../lib/tullynoau111", r; Ms=10)
+    model = FortranNOAu111Model(r; Ms=10)
 
     @time @testset "Finite difference gradient for individual elements" begin
         function V_neutral(x)
