@@ -85,7 +85,9 @@ function FortranNOAu111Model(r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
     )
 end
 
-NQCModels.mobileatoms(model::FortranNOAu111Model, r) = model.mobile_atoms
+NQCModels.mobileatoms(model::FortranNOAu111Model, ::Int) = model.mobile_atoms
+NQCModels.mobileatoms(model::FortranNOAu111Model) = model.mobile_atoms
+NQCModels.nelectrons(model::FortranNOAu111Model) = model.nelectrons
 
 function get_nearest_neighbours(N, r, dnn, aPBC)
     nn = zeros(Cint, N, 12)
@@ -203,7 +205,7 @@ function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:H
     F_ion = get_ion_force!(model)
     F_coup = get_coupling_force!(model)
 
-    @inbounds for i in NQCModels.mobileatoms(model, r)
+    @inbounds for i in NQCModels.mobileatoms(model)
         for j in axes(r, 1)
             coupling = @view D[j,i].data[begin+1:end,begin]
             set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[j,i])
