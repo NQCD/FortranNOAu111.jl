@@ -1,6 +1,6 @@
 FC = gfortran
 
-FFLAGS = -g -fbounds-check -fbacktrace
+FFLAGS = -O3
 
 dlext ?= dylib
 

@@ -5,11 +5,11 @@ export FortranNOAu111Model
 using NQCModels: NQCModels
 using Unitful, UnitfulAtomic
 using LinearAlgebra: Hermitian, eigen, diagind
-using FastGaussQuadrature: gausslegendre
+using StaticArrays: SMatrix
 
 const libtullynoau111 = "tullynoau111"
 
-struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
+struct FortranNOAu111Model <: NQCModels.DiabaticModels.DiabaticModel
     x::Matrix{Cdouble}
     nn::Matrix{Cint}
     N::Cint
@@ -20,14 +20,8 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     VAuFlag::Cint
     r0::Matrix{Cdouble}
     mass::Vector{Cdouble}
-    Ms::Cint
-    DeltaE::Float64
-    nelectrons::Int
     freeze::Vector{Int}
     mobile_atoms::Vector{Int}
-
-    x_gauss::Vector{Float64}
-    w_gauss::Vector{Float64}
 
     tmp_neutral_force::Matrix{Float64}
     tmp_ion_force::Matrix{Float64}
@@ -36,7 +30,7 @@ struct FortranNOAu111Model <: NQCModels.DiabaticModels.LargeDiabaticModel
     cache_positions::Matrix{Float64}
 end
 
-function FortranNOAu111Model(r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
+function FortranNOAu111Model(r; VAuFlag=1, freeze=Int[], freeze_layers=0)
 
     x = copy(r)
     x = ustrip.(auconvert.(u"m", x))
@@ -62,11 +56,6 @@ function FortranNOAu111Model(r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
     mass[2] = ustrip(uconvert(u"kg", 15.99491502u"u"))
     mass[3:N+2] .= ustrip(uconvert(u"kg", 196.966548u"u"))
 
-    DeltaE = austrip(7u"eV")
-    nelectrons = fld(Ms, 2)
-
-    x_gauss, w_gauss = gausslegendre(nelectrons)
-
     if freeze_layers != 0
         freeze = find_layer_indices(r, freeze_layers)
     end
@@ -78,8 +67,8 @@ function FortranNOAu111Model(r; Ms, VAuFlag=1, freeze=Int[], freeze_layers=0)
 
     cache_positions = zero(r)
 
-    FortranNOAu111Model(x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass, Ms,
-        DeltaE, nelectrons, freeze, mobile_atoms, x_gauss, w_gauss,
+    FortranNOAu111Model(x, nn, N, dnn, aPBC, Hp, dHp, VAuFlag, r0, mass,
+        freeze, mobile_atoms,
         tmp_neutral_force, tmp_ion_force, tmp_coupling_force,
         cache_positions
     )
@@ -122,7 +111,7 @@ function find_layer_indices(r, layers)
 end
 
 NQCModels.ndofs(::FortranNOAu111Model) = 3
-NQCModels.nstates(model::FortranNOAu111Model) = model.Ms+1
+NQCModels.nstates(model::FortranNOAu111Model) = 2
 
 convert_energy(x) = austrip(x * u"J")
 convert_force(x) = austrip(x * u"J/m")
@@ -164,34 +153,14 @@ function set_coordinates!(model::FortranNOAu111Model, r)
     end
 end
 
-function NQCModels.state_independent_potential(model::FortranNOAu111Model, r::AbstractMatrix)
-    evaluate_energy_force_func!(model, r)
-    return get_neutral_element(model)
-end
-
-function NQCModels.state_independent_derivative!(model::FortranNOAu111Model, D::AbstractMatrix, r::AbstractMatrix)
+function NQCModels.potential(model::FortranNOAu111Model, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
 
-    copyto!(D, get_neutral_force!(model))
-    freeze_atoms!(D, model.freeze)
-    return D
-end
+    v11 = get_neutral_element(model)
+    v12 = get_coupling_element(model)
+    v22 = get_ion_element(model)
 
-function NQCModels.potential!(model::FortranNOAu111Model, V::Hermitian, r::AbstractMatrix)
-    evaluate_energy_force_func!(model, r)
-
-    (;DeltaE, x_gauss, w_gauss) = model
-
-    bath = @view V[diagind(V)[2:end]]
-    set_bath_energies!(bath, x_gauss, DeltaE)
-
-    E_coup = get_coupling_element(model)
-    couplings = @view V.data[2:end,1]
-    set_coupling_elements!(couplings, w_gauss, DeltaE, E_coup)
-    couplings = @view V.data[1,2:end]
-    set_coupling_elements!(couplings, w_gauss, DeltaE, E_coup)
-
-    V[1,1] = get_ion_element(model) - get_neutral_element(model)
+    return Hermitian(SMatrix{2,2}(v11, v12, v12, v22))
 
     return V
 end
@@ -199,51 +168,21 @@ end
 function NQCModels.derivative!(model::FortranNOAu111Model, D::AbstractMatrix{<:Hermitian}, r::AbstractMatrix)
     evaluate_energy_force_func!(model, r)
 
-    (;w_gauss, DeltaE) = model
-
     F_neutral = get_neutral_force!(model)
     F_ion = get_ion_force!(model)
     F_coup = get_coupling_force!(model)
 
     @inbounds for i in NQCModels.mobileatoms(model)
         for j in axes(r, 1)
-            coupling = @view D[j,i].data[begin+1:end,begin]
-            set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[j,i])
-            coupling = @view D[j,i].data[begin,begin+1:end]
-            set_coupling_elements!(coupling, w_gauss, DeltaE, F_coup[j,i])
-            D[j,i][1,1] = F_ion[j,i] - F_neutral[j,i]
+            d11 = F_neutral[j,i]
+            d12 = F_coup[j,i]
+            d22 = F_ion[j,i]
+            D[j,i] = Hermitian(SMatrix{2,2}(d11, d12, d12, d22))
         end
     end
 
     return D
 end
-
-function freeze_atoms!(D::AbstractMatrix, freeze_indices)
-    @views for i in freeze_indices
-        fill!(D[:,i], zero(eltype(D)))
-    end
-end
-
-function set_bath_energies!(bath, x_gauss, DeltaE)
-    @inbounds for i in eachindex(x_gauss)
-        bath[i] = DeltaE * (-1 + x_gauss[i]) / 4
-    end
-    n = length(x_gauss)
-    @inbounds for i in eachindex(x_gauss)
-        bath[i+n] = DeltaE * (1 + x_gauss[i]) / 4
-    end
-end
-
-function set_coupling_elements!(coupling, w_gauss, DeltaE, E_coup)
-    nelectrons = length(w_gauss)
-    @inbounds for i in eachindex(w_gauss)
-        coupling[i] = sqrt(DeltaE * w_gauss[i]) / 2 * E_coup / sqrt(DeltaE)
-    end
-    @inbounds for i in eachindex(w_gauss)
-        coupling[i+nelectrons] = coupling[i]
-    end
-end
-
 function evaluate_energy_force_func!(model::FortranNOAu111Model, r::AbstractMatrix)
     if r != model.cache_positions
         set_coordinates!(model, r)

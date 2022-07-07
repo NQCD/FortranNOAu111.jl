@@ -33,12 +33,13 @@ end
         1.5e-10 2.65e-10;
     ] .* u"m"))
     r = austrip.(hcat(no, r) .* u"Å")
-    model = FortranNOAu111Model(r; Ms=10)
+    model = FortranNOAu111Model(r)
+    metal_model = AndersonHolstein(model, ReferenceGaussLegendre(10, austrip(-3.5u"eV"), austrip(3.5u"eV")))
     FortranNOAu111.evaluate_energy_force_func!(model, r)
 
     @testset "Hamiltonian" begin
         reference = readdlm(joinpath(@__DIR__, "reference_data", "hamiltonian.txt"); skipstart=3)
-        V = potential(model, r)
+        V = potential(metal_model, r)
         @test reference ≈ V rtol=1e-6
     end
 
@@ -61,8 +62,8 @@ end
 
     @time @testset "state_independent_force" begin
         F = zero(r)
-        model = FortranNOAu111Model(r; Ms=10, freeze_layers=1)
-        NQCModels.state_independent_derivative!(model, F, r)
+        metal_model = AndersonHolstein(FortranNOAu111Model(r, freeze_layers=1), ReferenceGaussLegendre(10, austrip(-3.5u"eV"), austrip(3.5u"eV")))
+        NQCModels.state_independent_derivative!(metal_model, F, r)
         LinearAlgebra.lmul!(-1, F)
         reference = permutedims(readdlm(joinpath(@__DIR__, "reference_data", "state_independent_force.txt"); skipstart=0))
         @test reference ≈ F rtol=1e-6
@@ -70,14 +71,14 @@ end
 
     @time @testset "complete_force" begin
         F = zero(r)
-        model = FortranNOAu111Model(r; Ms=10, freeze_layers=1)
-        NQCModels.state_independent_derivative!(model, F, r)
+        metal_model = AndersonHolstein(FortranNOAu111Model(r, freeze_layers=1), ReferenceGaussLegendre(10, austrip(-3.5u"eV"), austrip(3.5u"eV")))
+        NQCModels.state_independent_derivative!(metal_model, F, r)
         LinearAlgebra.lmul!(-1, F)
 
-        V = potential(model, r)
+        V = potential(metal_model, r)
         eig = eigen(V)
         U = eig.vectors
-        D = derivative(model, r)
+        D = derivative(metal_model, r)
 
         state = 1:5
         for I in eachindex(F)
@@ -116,7 +117,7 @@ end
         2.0 2.0;
     ]
     r = austrip.(hcat(no, r) .* u"Å")
-    model = FortranNOAu111Model(r; Ms=10)
+    model = FortranNOAu111Model(r)
 
     @time @testset "Finite difference gradient for individual elements" begin
         function V_neutral(x)
@@ -147,17 +148,4 @@ end
         @test F3 ≈ analytic_coupling
     end
 
-    @time @testset "Finite difference state independent" begin
-        V(x) = NQCModels.state_independent_potential(model, x)
-        F = FiniteDiff.finite_difference_gradient(V, r)
-        D = zero(r)
-        NQCModels.state_independent_derivative!(model, D, r)
-        @test D ≈ F
-    end
-
-    @time @testset "Finite difference state dependent" begin
-        finite_diff = finite_difference_gradient(model, r)
-        analytic = derivative(model, r)
-        @test finite_diff ≈ analytic
-    end
 end
