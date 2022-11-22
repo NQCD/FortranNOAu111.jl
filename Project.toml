@@ -1,7 +1,7 @@
 name = "FortranNOAu111"
 uuid = "1c79c530-3a9d-43cd-822f-bba4c4e182d2"
 authors = ["James Gardner <james.gardner1421@gmail.com> and contributors"]
-version = "0.1.0"
+version = "1.0.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
